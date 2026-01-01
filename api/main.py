@@ -1,9 +1,10 @@
 import os
+import time
 from typing import Any, Dict, Optional
 
 from celery import Celery
 from celery.result import AsyncResult
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +35,7 @@ class InferenceRequest(BaseModel):
 class InferenceQueued(BaseModel):
     task_id: str
     status: str = "QUEUED"
+    server_queued_at: float
 
 
 class ResultResponse(BaseModel):
@@ -54,9 +56,17 @@ def inference(req: InferenceRequest) -> InferenceQueued:
     Accept a text payload and enqueue a Celery task.
     Returns immediately with a task_id.
     """
-    # The worker defines the task name: "worker.tasks.run_inference"
-    async_result = celery_app.send_task("worker.tasks.run_inference", args=[req.text])
-    return InferenceQueued(task_id=async_result.id)
+    server_queued_at = time.time()
+
+    async_result = celery_app.send_task(
+        "worker.tasks.run_inference",
+        args=[req.text],
+        queue="inference.jobs",
+        exchange="inference",
+        routing_key="inference.jobs",
+    )
+
+    return InferenceQueued(task_id=async_result.id, server_queued_at=server_queued_at)
 
 
 @app.get("/result/{task_id}", response_model=ResultResponse)
@@ -65,8 +75,8 @@ def get_result(task_id: str) -> ResultResponse:
     Fetch status/result for a given task_id from Celery backend (Redis).
     """
     res = AsyncResult(task_id, app=celery_app)
+    status = res.status
 
-    status = res.status  # PENDING, STARTED, SUCCESS, FAILURE, RETRY
     payload: ResultResponse = ResultResponse(task_id=task_id, status=status)
 
     if status == "SUCCESS":
@@ -76,4 +86,5 @@ def get_result(task_id: str) -> ResultResponse:
     if status == "FAILURE":
         payload.error = str(res.result)
         return payload
+
     return payload
