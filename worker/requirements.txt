@@ -1,0 +1,4 @@
+celery==5.4.0
+redis==5.2.1
+transformers==4.46.3
+torch==2.4.1
