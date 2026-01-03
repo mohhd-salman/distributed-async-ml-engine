@@ -67,17 +67,15 @@ It is especially useful for understanding **how ML inference is deployed in real
 
 ---
 
-## Why I Built This Project
+## What This Project Demonstrates
 
-I built this project to demonstrate:
+- Designing non-blocking ML inference systems
+- Applying asynchronous task queues correctly
+- Managing CPU-heavy workloads safely
+- Measuring latency and throughput in async systems
+- Separating API reliability from compute scalability
 
-- Production-style asynchronous system design
-- Safe integration of heavy ML workloads into backend services
-- Task queue–based decoupling and worker pools
-- Load testing and verification without real users
-- Applying ML models in a systems context
-
-The emphasis is on **architecture, scalability, and reliability** rather than model accuracy.
+These are common challenges in production ML and backend platforms.
 
 ---
 
@@ -183,9 +181,110 @@ Pre-trained Transformer models simulate realistic, CPU-heavy inference workloads
 
 ---
 
+## Load Testing & Performance Validation
+
+To validate that the system behaves correctly under concurrent load, this project includes **custom load testing and result polling tools**.
+
+The goal is not raw benchmark numbers, but to verify:
+
+- API requests remain fast under load
+- Inference tasks are queued instead of blocking
+- Workers process tasks asynchronously
+- Backpressure is handled via the message queue
+- End-to-end latency can be measured accurately
+
+This mirrors how production teams validate async ML systems before deployment.
+
+---
+
+### Load Generator (`load_test.py`)
+
+`load_test.py` simulates multiple clients sending inference requests concurrently.
+
+What it does:
+- Sends bursts of HTTP requests to the `/inference` endpoint
+- Records the returned `task_id` for each request
+- Stores submission timestamps for latency measurement
+- Outputs all task metadata to a JSONL file for later analysis
+
+This script verifies that the API layer remains responsive while work is offloaded to the queue.
+
+---
+
+### Result Poller & Metrics (`poll_results.py`)
+
+`poll_results.py` continuously polls task status using the `/result/{task_id}` endpoint until completion.
+
+What it does:
+- Polls task status in parallel with configurable concurrency
+- Tracks task completion and failures
+- Computes end-to-end latency per task
+- Produces aggregate metrics such as:
+  - Average latency
+  - p50 / p95 / p99 latency
+  - Throughput (tasks per second)
+
+This provides a clear view of system behavior under load without relying on external observability tools.
+
+---
+
+### Observed Behavior Under Load
+
+During load tests with concurrent requests:
+
+- API responses returned immediately with `task_id`s
+- Tasks accumulated temporarily in the message queue
+- Worker processes consumed tasks asynchronously
+- Queue depth fluctuated based on worker throughput
+- End-to-end latency increased predictably with load
+
+This confirms correct decoupling between request handling and ML inference execution.
+
+---
+
 ## Running the Project Locally
 
 ### Prerequisites
 - Docker
 - Docker Compose
 - Python 3.10+
+
+### Services Started
+
+Running the project locally starts the following services:
+
+- FastAPI API server (request intake)
+- Celery workers (ML inference execution)
+- RabbitMQ (task queue / broker)
+- Redis (task status and results backend)
+- Flower (Celery monitoring UI)
+
+### Start the System
+
+From the project root, start all services using Docker Compose:
+
+```bash
+docker-compose up --build
+```
+To run the system with multiple worker processes:
+
+```bash
+docker-compose up --scale worker=3
+```
+
+---
+
+## Optional Observability Links
+
+When running locally, the following monitoring tools are available:
+
+- **Flower (Celery monitoring):**  
+  `http://localhost:5555`
+
+- **RabbitMQ Management UI:**  
+  `http://localhost:15672`  
+  - Username: `guest`  
+  - Password: `guest`
+
+These interfaces are useful for inspecting queue depth, task throughput, worker activity, and retry behavior during load testing.
+
