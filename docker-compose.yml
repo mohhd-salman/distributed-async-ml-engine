@@ -1,0 +1,83 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: dae-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  redis:
+    image: redis:7-alpine
+    container_name: dae-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - redis-data:/data
+
+  api:
+    build:
+      context: ./api
+    container_name: dae-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Celery connection strings (used by API to enqueue tasks)
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./worker
+#    container_name: dae-worker
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    command: >
+      celery -A tasks.celery_app worker
+      --loglevel=info
+      --queues=inference.jobs
+      --concurrency=4
+      -E
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  flower:
+    image: mher/flower:2.0
+    container_name: dae-flower
+    ports:
+      - "5555:5555"
+    command: >
+      celery --broker=amqp://guest:guest@rabbitmq:5672//
+      flower --address=0.0.0.0 --port=5555
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  rabbitmq-data:
+  redis-data:
